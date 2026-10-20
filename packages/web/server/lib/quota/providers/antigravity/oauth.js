@@ -1,35 +1,28 @@
 import { z } from 'zod';
 
-// Installed-app clients already used by the Gemini and Antigravity providers.
-// Keeping these in git is fine: for an installed application Google expects
+// Installed-app client already used by the Antigravity auth plugin.
+// Keeping this in git is fine: for an installed application Google expects
 // the client ID and secret to be embedded in the source, and "the client
 // secret is obviously not treated as a secret"
 // (https://developers.google.com/identity/protocols/oauth2#installed).
-const CLIENTS = {
-  gemini: {
-    clientId: '681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com',
-    clientSecret: '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',
-  },
-  antigravity: {
-    clientId: '1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com',
-    clientSecret: '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',
-  },
+const ANTIGRAVITY_CLIENT = {
+  clientId: '1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com',
+  clientSecret: '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',
 };
 
 const tokenResponse = z.object({ access_token: z.string().trim().min(1) });
 const oauthError = z.object({ error: z.enum(['unauthorized_client', 'invalid_grant', 'invalid_client']) });
 
-const exchange = async (refreshToken, client) => {
+const exchange = async (refreshToken) => {
   let status = null;
   const signal = AbortSignal.timeout(15000);
   try {
-    const { clientId, clientSecret } = CLIENTS[client];
     const response = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
-        client_id: clientId,
-        client_secret: clientSecret,
+        client_id: ANTIGRAVITY_CLIENT.clientId,
+        client_secret: ANTIGRAVITY_CLIENT.clientSecret,
         refresh_token: refreshToken,
         grant_type: 'refresh_token',
       }),
@@ -57,13 +50,9 @@ const exchange = async (refreshToken, client) => {
   }
 };
 
-export const refreshGoogleAccessToken = async (refreshToken, client, { fallbackToAntigravity = false } = {}) => {
-  const result = await exchange(refreshToken, client);
-  // Both plugins pack project context with pipes. The credential has no reliable
-  // client marker; probe the other known client only on this specific rejection.
-  if (!result.ok && client === 'gemini' && fallbackToAntigravity
-    && (result.status === 400 || result.status === 401) && result.error === 'unauthorized_client') {
-    return exchange(refreshToken, 'antigravity');
-  }
-  return result;
-};
+/**
+ * Exchange an Antigravity refresh token for an access token.
+ * The credential has no reliable client marker, so the probe stays on the
+ * Antigravity client only: the Gemini CLI client is not used by the plugin.
+ */
+export const refreshAntigravityAccessToken = async (refreshToken) => exchange(refreshToken);

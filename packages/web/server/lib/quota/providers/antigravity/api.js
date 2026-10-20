@@ -5,7 +5,7 @@
  * @module quota/providers/antigravity/api
  */
 
-import { refreshGoogleAccessToken } from '../google/oauth.js';
+import { refreshAntigravityAccessToken } from './oauth.js';
 import { antigravityHeaders } from './client.js';
 
 const ANTIGRAVITY_ENDPOINTS = [
@@ -15,7 +15,7 @@ const ANTIGRAVITY_ENDPOINTS = [
 ];
 
 export const refreshAntigravityToken = async (refreshToken) => {
-  const result = await refreshGoogleAccessToken(refreshToken, 'antigravity');
+  const result = await refreshAntigravityAccessToken(refreshToken);
   return result.ok ? result.accessToken : null;
 };
 
