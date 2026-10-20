@@ -6,7 +6,6 @@ export type QuotaProviderId =
   | 'cline-pass'
   | 'github-copilot'
   | 'github-copilot-addon'
-  | 'google'
   | 'antigravity'
   | 'kimi-for-coding'
   | 'nano-gpt'

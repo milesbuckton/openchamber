@@ -42,6 +42,12 @@ describe('resolveQuotaProviderId', () => {
     expect(resolveQuotaProviderId('claude-code')).toBe('claude');
   });
 
+  test('maps the Google provider ids onto the Antigravity card', () => {
+    // The Antigravity auth plugin registers its models under `google`.
+    expect(resolveQuotaProviderId('google')).toBe('antigravity');
+    expect(resolveQuotaProviderId('gemini')).toBe('antigravity');
+  });
+
   test('is case and whitespace tolerant, and rejects empties', () => {
     expect(resolveQuotaProviderId('  OpenAI ')).toBe('codex');
     expect(resolveQuotaProviderId('')).toBeNull();

@@ -9,8 +9,9 @@ import { readOpenCodeCredentials } from './opencodeAuth';
 import { readConfig } from './opencodeConfig';
 import { isRecord, toProviderEntity } from './opencode-config-v2';
 import { fetchExeDevUsage } from './exeDevQuota';
-import { refreshGoogleAccessToken } from '../../web/server/lib/quota/providers/google/oauth.js';
+import { refreshAntigravityAccessToken } from '../../web/server/lib/quota/providers/antigravity/oauth.js';
 import { antigravityHeaders, warnIfGeminiGroupMissing } from '../../web/server/lib/quota/providers/antigravity/client.js';
+import { readAntigravityStoreAccount } from '../../web/server/lib/quota/providers/antigravity/store.js';
 
 type AuthEntry = Record<string, unknown> | string;
 type AuthFile = Record<string, AuthEntry>;
@@ -63,20 +64,12 @@ type OpenAiUsagePayload = {
   };
 };
 
-type GoogleModelsPayload = {
+type AntigravityModelsPayload = {
   models?: Record<string, {
     quotaInfo?: {
       remainingFraction?: number;
       resetTime?: string;
     };
-  }>;
-};
-
-type GoogleQuotaBucketsPayload = {
-  buckets?: Array<{
-    modelId?: string;
-    remainingFraction?: number;
-    resetTime?: string;
   }>;
 };
 
@@ -279,54 +272,33 @@ const ANTIGRAVITY_ACCOUNTS_PATHS = [
 ];
 
 const DEFAULT_PROJECT_ID = 'rising-fact-p41fc';
-const GOOGLE_FIVE_HOUR_WINDOW_SECONDS = 5 * 60 * 60;
-const GOOGLE_DAILY_WINDOW_SECONDS = 24 * 60 * 60;
-const GOOGLE_WEEKLY_WINDOW_SECONDS = 7 * 24 * 60 * 60;
-const GOOGLE_PRIMARY_ENDPOINT = 'https://cloudcode-pa.googleapis.com';
-
-const GOOGLE_ENDPOINTS = [
-  'https://daily-cloudcode-pa.sandbox.googleapis.com',
-  'https://autopush-cloudcode-pa.sandbox.googleapis.com',
-  GOOGLE_PRIMARY_ENDPOINT,
-];
+const ANTIGRAVITY_FIVE_HOUR_WINDOW_SECONDS = 5 * 60 * 60;
+const ANTIGRAVITY_DAILY_WINDOW_SECONDS = 24 * 60 * 60;
+const ANTIGRAVITY_WEEKLY_WINDOW_SECONDS = 7 * 24 * 60 * 60;
+const ANTIGRAVITY_PRIMARY_ENDPOINT = 'https://cloudcode-pa.googleapis.com';
 
 // Antigravity reaches the production daily host first and never the autopush
-// sandbox; Gemini CLI keeps the endpoint order above.
+// sandbox.
 const ANTIGRAVITY_ENDPOINTS = [
   'https://daily-cloudcode-pa.googleapis.com',
   'https://daily-cloudcode-pa.sandbox.googleapis.com',
-  GOOGLE_PRIMARY_ENDPOINT,
+  ANTIGRAVITY_PRIMARY_ENDPOINT,
 ];
 
-const GOOGLE_HEADERS = {
-  'User-Agent': 'antigravity/1.11.5 windows/amd64',
-  'X-Goog-Api-Client': 'google-cloud-sdk vscode_cloudshelleditor/0.1',
-  'Client-Metadata':
-    '{"ideType":"IDE_UNSPECIFIED","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}',
-};
+const resolveAntigravityWindow = (resetAt: number | null) => {
+  const remainingSeconds = typeof resetAt === 'number'
+    ? Math.max(0, Math.round((resetAt - Date.now()) / 1000))
+    : null;
 
-const resolveGoogleWindow = (sourceId: GoogleAuthSource['sourceId'], resetAt: number | null) => {
-  if (sourceId === 'gemini') {
-    return { label: 'daily', seconds: GOOGLE_DAILY_WINDOW_SECONDS } as const;
+  if (remainingSeconds !== null && remainingSeconds > 36 * 60 * 60) {
+    return { label: 'weekly', seconds: ANTIGRAVITY_WEEKLY_WINDOW_SECONDS } as const;
   }
 
-  if (sourceId === 'antigravity') {
-    const remainingSeconds = typeof resetAt === 'number'
-      ? Math.max(0, Math.round((resetAt - Date.now()) / 1000))
-      : null;
-
-    if (remainingSeconds !== null && remainingSeconds > 36 * 60 * 60) {
-      return { label: 'weekly', seconds: GOOGLE_WEEKLY_WINDOW_SECONDS } as const;
-    }
-
-    if (remainingSeconds !== null && remainingSeconds > 10 * 60 * 60) {
-      return { label: 'daily', seconds: GOOGLE_DAILY_WINDOW_SECONDS } as const;
-    }
-
-    return { label: '5h', seconds: GOOGLE_FIVE_HOUR_WINDOW_SECONDS } as const;
+  if (remainingSeconds !== null && remainingSeconds > 10 * 60 * 60) {
+    return { label: 'daily', seconds: ANTIGRAVITY_DAILY_WINDOW_SECONDS } as const;
   }
 
-  return { label: 'daily', seconds: GOOGLE_DAILY_WINDOW_SECONDS } as const;
+  return { label: '5h', seconds: ANTIGRAVITY_FIVE_HOUR_WINDOW_SECONDS } as const;
 };
 
 const ZAI_TOKEN_WINDOW_SECONDS: Record<number, number> = {
@@ -390,7 +362,7 @@ const asNonEmptyString = (value: unknown): string | null => {
 const ollamaApiKeyFrom = (entry: ReturnType<typeof normalizeAuthEntry>): string | null =>
   asNonEmptyString(entry?.key) ?? asNonEmptyString(entry?.token);
 
-const parseGoogleRefreshToken = (rawRefreshToken: unknown) => {
+const parseAntigravityRefreshToken = (rawRefreshToken: unknown) => {
   const refreshToken = asNonEmptyString(rawRefreshToken);
   if (!refreshToken) {
     return { refreshToken: null, projectId: null, managedProjectId: null };
@@ -840,9 +812,6 @@ export const listConfiguredQuotaProviders = async () => {
     configured.add('codex');
   }
 
-  if (resolveGeminiCliAuth(auth)) {
-    configured.add('google');
-  }
   if (resolveAntigravityAuth()) {
     configured.add('antigravity');
   }
@@ -1050,42 +1019,29 @@ const fetchCodexQuota = async (): Promise<ProviderResult> => {
   }
 };
 
-type GoogleAuthSource = {
-  sourceId: 'gemini' | 'antigravity';
+type AntigravityAuthSource = {
+  sourceId: 'antigravity';
   sourceLabel: string;
-  accessToken?: string;
   refreshToken?: string;
-  expires?: number;
   projectId?: string;
   email?: string;
 };
 
-const resolveGeminiCliAuth = (auth: AuthFile): GoogleAuthSource | null => {
-  const entry = normalizeAuthEntry(getAuthEntry(auth, ['google', 'google.oauth'])) as Record<string, unknown> | null;
-  const entryObject = asObject(entry);
-  if (!entryObject) {
-    return null;
+const resolveAntigravityAuth = (): AntigravityAuthSource | null => {
+  // The auth plugin stores its accounts in a store directory; the legacy
+  // accounts file is what older plugin versions wrote. The store wins because
+  // the plugin migrates the file into the store and keeps the store current.
+  const storeAccount = readAntigravityStoreAccount(OPENCODE_CONFIG_DIR);
+  if (storeAccount?.refreshToken) {
+    return {
+      sourceId: 'antigravity',
+      sourceLabel: 'Antigravity',
+      refreshToken: storeAccount.refreshToken,
+      projectId: storeAccount.projectId ?? undefined,
+      email: storeAccount.email ?? undefined,
+    };
   }
 
-  const oauthObject = asObject(entryObject.oauth) ?? entryObject;
-  const accessToken = asNonEmptyString(oauthObject.access) ?? asNonEmptyString(oauthObject.token);
-  const refreshParts = parseGoogleRefreshToken(oauthObject.refresh);
-
-  if (!accessToken && !refreshParts.refreshToken) {
-    return null;
-  }
-
-  return {
-    sourceId: 'gemini',
-    sourceLabel: 'Gemini',
-    accessToken: accessToken ?? undefined,
-    refreshToken: refreshParts.refreshToken ?? undefined,
-    projectId: (refreshParts.projectId ?? refreshParts.managedProjectId) ?? undefined,
-    expires: toTimestamp(oauthObject.expires) ?? undefined,
-  };
-};
-
-const resolveAntigravityAuth = (): GoogleAuthSource | null => {
   for (const filePath of ANTIGRAVITY_ACCOUNTS_PATHS) {
     const data = readJsonFile(filePath);
     const accounts = data?.accounts;
@@ -1095,7 +1051,7 @@ const resolveAntigravityAuth = (): GoogleAuthSource | null => {
         : 0;
       const account = (accounts[index] as Record<string, unknown> | undefined) ?? (accounts[0] as Record<string, unknown> | undefined);
       if (account?.refreshToken) {
-        const refreshParts = parseGoogleRefreshToken(account.refreshToken);
+        const refreshParts = parseAntigravityRefreshToken(account.refreshToken);
         return {
           sourceId: 'antigravity',
           sourceLabel: 'Antigravity',
@@ -1114,51 +1070,11 @@ const resolveAntigravityAuth = (): GoogleAuthSource | null => {
   return null;
 };
 
-const resolveGoogleAuthSources = (auth: AuthFile): GoogleAuthSource[] => {
-  const sources: GoogleAuthSource[] = [];
-
-  const geminiAuth = resolveGeminiCliAuth(auth);
-  if (geminiAuth) {
-    sources.push(geminiAuth);
-  }
-
-  return sources;
-};
-
-const fetchGoogleQuotaBuckets = async (accessToken: string, projectId?: string) => {
-  const body = projectId ? { project: projectId } : {};
-  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-  const timeout = controller ? setTimeout(() => controller.abort(), 15000) : null;
-  try {
-    const response = await fetch(`${GOOGLE_PRIMARY_ENDPOINT}/v1internal:retrieveUserQuota`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-      signal: controller?.signal,
-    });
-
-    if (!response.ok) {
-      return null;
-    }
-
-    return await response.json() as GoogleQuotaBucketsPayload;
-  } catch {
-    return null;
-  } finally {
-    if (timeout) {
-      clearTimeout(timeout);
-    }
-  }
-};
-
-const fetchGoogleModels = async (
+const fetchAntigravityModels = async (
   accessToken: string,
   projectId?: string,
-  endpoints: readonly string[] = GOOGLE_ENDPOINTS,
-  clientHeaders: Record<string, string> = GOOGLE_HEADERS,
+  endpoints: readonly string[] = ANTIGRAVITY_ENDPOINTS,
+  clientHeaders: Record<string, string> = antigravityHeaders(),
 ) => {
   const body = projectId ? { project: projectId } : {};
 
@@ -1190,133 +1106,6 @@ const fetchGoogleModels = async (
   }
 
   return null;
-};
-
-const fetchGoogleQuota = async (): Promise<ProviderResult> => {
-  const authSources = resolveGoogleAuthSources(await readOpenCodeCredentials());
-  if (!authSources.length) {
-    return buildResult({
-      providerId: 'google',
-      providerName: 'Google',
-      ok: false,
-      configured: false,
-      error: 'Not configured',
-    });
-  }
-
-  const models: Record<string, ProviderUsage> = {};
-  const sourceErrors: string[] = [];
-
-  for (const source of authSources) {
-    const now = Date.now();
-    let accessToken = source.accessToken;
-
-    if (!accessToken || (typeof source.expires === 'number' && source.expires <= now)) {
-      if (!source.refreshToken) {
-        sourceErrors.push(`${source.sourceLabel}: Missing refresh token`);
-        continue;
-      }
-      const result = await refreshGoogleAccessToken(source.refreshToken, 'gemini', { fallbackToAntigravity: true });
-      if (!result.ok) {
-        sourceErrors.push(`${source.sourceLabel}: Failed to refresh OAuth token`);
-        continue;
-      }
-      accessToken = result.accessToken;
-    }
-
-    const projectId = source.projectId ?? DEFAULT_PROJECT_ID;
-    let mergedAnyModel = false;
-
-    if (source.sourceId === 'gemini') {
-      const quotaPayload = await fetchGoogleQuotaBuckets(accessToken, projectId);
-      const buckets = Array.isArray(quotaPayload?.buckets) ? quotaPayload.buckets : [];
-
-      for (const bucket of buckets) {
-        const modelId = asNonEmptyString(bucket.modelId);
-        if (!modelId) {
-          continue;
-        }
-
-        const scopedName = modelId.startsWith(`${source.sourceId}/`)
-          ? modelId
-          : `${source.sourceId}/${modelId}`;
-
-        const remainingFraction = toNumber(bucket.remainingFraction);
-        const remainingPercent = remainingFraction !== null
-          ? Math.round(remainingFraction * 100)
-          : null;
-        const usedPercent = remainingPercent !== null ? Math.max(0, 100 - remainingPercent) : null;
-        const resetAt = toTimestamp(bucket.resetTime);
-        const window = resolveGoogleWindow(source.sourceId, resetAt);
-
-        models[scopedName] = {
-          windows: {
-            [window.label]: toUsageWindow({
-              usedPercent,
-              windowSeconds: window.seconds,
-              resetAt,
-            }),
-          },
-        };
-        mergedAnyModel = true;
-      }
-    }
-
-    const payload = await fetchGoogleModels(accessToken, projectId);
-    if (payload && typeof payload === 'object') {
-      const payloadModels = (payload as GoogleModelsPayload).models ?? {};
-      for (const [modelName, modelData] of Object.entries(payloadModels)) {
-        const scopedName = modelName.startsWith(`${source.sourceId}/`)
-          ? modelName
-          : `${source.sourceId}/${modelName}`;
-        const quotaInfo = modelData?.quotaInfo;
-        const remainingFraction = quotaInfo?.remainingFraction;
-        const remainingPercent = typeof remainingFraction === 'number'
-          ? Math.round(remainingFraction * 100)
-          : null;
-        const usedPercent = remainingPercent !== null ? Math.max(0, 100 - remainingPercent) : null;
-        const resetAt = quotaInfo?.resetTime
-          ? new Date(quotaInfo.resetTime).getTime()
-          : null;
-        const window = resolveGoogleWindow(source.sourceId, resetAt);
-        models[scopedName] = {
-          windows: {
-            [window.label]: toUsageWindow({
-              usedPercent,
-              windowSeconds: window.seconds,
-              resetAt,
-            }),
-          },
-        };
-        mergedAnyModel = true;
-      }
-    }
-
-    if (!mergedAnyModel) {
-      sourceErrors.push(`${source.sourceLabel}: Failed to fetch models`);
-    }
-  }
-
-  if (!Object.keys(models).length) {
-    return buildResult({
-      providerId: 'google',
-      providerName: 'Google',
-      ok: false,
-      configured: true,
-      error: sourceErrors[0] ?? 'Failed to fetch models',
-    });
-  }
-
-  return buildResult({
-    providerId: 'google',
-    providerName: 'Google',
-    ok: true,
-    configured: true,
-    usage: {
-      windows: {},
-      models: Object.keys(models).length ? models : undefined,
-    },
-  });
 };
 
 type QuotaSummaryBucketPayload = {
@@ -1381,7 +1170,7 @@ const fetchAntigravityQuota = async (): Promise<ProviderResult> => {
     });
   }
 
-  const result = await refreshGoogleAccessToken(auth.refreshToken, 'antigravity');
+  const result = await refreshAntigravityAccessToken(auth.refreshToken);
   const accessToken = result.ok ? result.accessToken : null;
   if (!accessToken) {
     return buildResult({
@@ -1397,7 +1186,7 @@ const fetchAntigravityQuota = async (): Promise<ProviderResult> => {
 
   const [summaryPayload, rawModelsPayload] = await Promise.all([
     fetchAntigravityQuotaSummary(accessToken, projectId),
-    fetchGoogleModels(accessToken, projectId, ANTIGRAVITY_ENDPOINTS, antigravityHeaders()),
+    fetchAntigravityModels(accessToken, projectId, ANTIGRAVITY_ENDPOINTS, antigravityHeaders()),
   ]);
 
   warnIfGeminiGroupMissing(summaryPayload);
@@ -1427,18 +1216,18 @@ const fetchAntigravityQuota = async (): Promise<ProviderResult> => {
       const windowStr = (b.window ?? b.bucketId ?? '').toLowerCase();
 
       let label = '5h';
-      let seconds = GOOGLE_FIVE_HOUR_WINDOW_SECONDS;
+      let seconds = ANTIGRAVITY_FIVE_HOUR_WINDOW_SECONDS;
 
       if (windowStr.includes('week') || windowStr.includes('7d')) {
         label = 'weekly';
-        seconds = GOOGLE_WEEKLY_WINDOW_SECONDS;
+        seconds = ANTIGRAVITY_WEEKLY_WINDOW_SECONDS;
         bucketWeekly = { remainingFraction: remainingFraction ?? 1 };
       } else if (windowStr.includes('day') || windowStr.includes('daily')) {
         label = 'daily';
-        seconds = GOOGLE_DAILY_WINDOW_SECONDS;
+        seconds = ANTIGRAVITY_DAILY_WINDOW_SECONDS;
       } else {
         label = '5h';
-        seconds = GOOGLE_FIVE_HOUR_WINDOW_SECONDS;
+        seconds = ANTIGRAVITY_FIVE_HOUR_WINDOW_SECONDS;
         bucket5h = { remainingFraction: remainingFraction ?? 1 };
       }
 
@@ -1458,7 +1247,7 @@ const fetchAntigravityQuota = async (): Promise<ProviderResult> => {
   }
 
   const models: Record<string, ProviderUsage> = {};
-  const rawModels = (rawModelsPayload as GoogleModelsPayload)?.models ?? {};
+  const rawModels = (rawModelsPayload as AntigravityModelsPayload)?.models ?? {};
 
   for (const [modelName, modelData] of Object.entries(rawModels)) {
     const name = asNonEmptyString(modelName);
@@ -1501,7 +1290,7 @@ const fetchAntigravityQuota = async (): Promise<ProviderResult> => {
       const remainingPercent = typeof remainingFraction === 'number' ? Math.round(remainingFraction * 100) : null;
       const usedPercent = remainingPercent !== null ? Math.max(0, 100 - remainingPercent) : null;
       const resetAt = quotaInfo?.resetTime ? new Date(quotaInfo.resetTime).getTime() : null;
-      const window = resolveGoogleWindow('antigravity', resetAt);
+      const window = resolveAntigravityWindow(resetAt);
 
       models[name] = {
         windows: {
@@ -4199,8 +3988,6 @@ const fetchQuotaForProviderUncoalesced = async (providerId: string): Promise<Pro
       return fetchCopilotQuota();
     case 'github-copilot-addon':
       return fetchCopilotAddonQuota();
-    case 'google':
-      return fetchGoogleQuota();
     case 'antigravity':
       return fetchAntigravityQuota();
     case 'kimi-for-coding':
