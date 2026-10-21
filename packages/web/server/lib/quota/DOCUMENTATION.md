@@ -52,6 +52,7 @@ asked, `/api/quota/providers` answers 500 instead of an empty list.
 | `ollama-cloud` | Ollama Cloud | `providers/ollama-cloud.js` | `ollama-cloud` / `ollamacloud` API key from OpenCode's credential store |
 | `wafer` | Wafer.ai | `providers/wafer.js` | `wafer`, `wafer-ai`, `wafer_ai`, `wafer.ai` |
 | `opencode-go` | OpenCode Go | `providers/opencode-go.js` | API key on the `opencode-go` integration or, without one, on the shared `opencode` integration; or an OpenCode Console OAuth sign-in on `opencode` |
+| `opencode` | OpenCode Zen | `providers/opencode.js` | API key on the shared `opencode` integration, or an OpenCode Console OAuth sign-in on `opencode` |
 | `neuralwatt` | NeuralWatt | `providers/neuralwatt.js` | `neuralwatt` (API key under `key` or `token`) |
 | `kilo` | Kilo Code | `providers/kilo.js` | `kilo`, `kilocode`, `kilo-code` (API key under `key`, `token`, or OAuth `access`; organization id under `kilocodeOrganizationId`, `organizationId`, or OAuth `accountId`, else OpenCode `provider.kilo.options.kilocodeOrganizationId`) |
 | `zenmux` | ZenMux | `providers/zenmux.js` | Optional Platform API key stored under `~/.config/openchamber/quota/zenmux.json` (`platformApiKey`). The OpenCode chat key is not used. |
@@ -87,6 +88,20 @@ OpenCode Go has two credential shapes and they are not interchangeable. An API k
 - Keep `packages/web/server/lib/quota/providers/opencode-go.js` and `packages/vscode/src/opencodeGoQuota.ts` in sync — the VS Code extension duplicates this logic rather than importing the web provider.
 
 On the first OpenCode Go usage refresh after upgrading, OpenChamber deletes the obsolete `quota/opencode-go.json` credential file without reading its cookie value.
+
+## OpenCode Zen credential and quota semantics
+
+OpenCode Zen is the Console workspace behind the shared `opencode` integration: the free models plus pay-as-you-go spend on the credits the account holds. A workspace with an OpenCode Go subscription is reported by the separate `opencode-go` provider, which reads the Go meters.
+
+Zen has no request meters, so the Console exposes counters instead: the request counts per range, the spend of the current billing cycle, and the models that served those requests. The provider reads `GET https://opencode.ai/console/api/usage/summary?range=24h|7d|30d`, `GET https://opencode.ai/console/api/usage/models?range=30d&page=1&pageSize=50`, and `GET https://opencode.ai/console/api/budgets/service-accounts/status`. These endpoints are not publicly documented, so re-check them against the live Console page before assuming they are still current.
+
+- **Credential selection**: an API key on the shared `opencode` integration serves Zen, and so does an OpenCode Console OAuth sign-in on the same integration (`server` is `https://opencode.ai/console` and `orgID` matches `^(?:org|wrk)_[A-Za-z0-9]+$`). The sign-in wins when both exist. The credential is read through `../opencode/auth.js` on every fetch, so switching accounts drops the previous account instead of showing stale numbers, and OpenChamber never refreshes it: OpenCode owns that.
+- **Counters, not shares**: a request count is not a share of a limit, so the `daily` and `weekly` windows carry no percent and report the count in their `valueLabel` ("292 requests"). Every count and amount arrives as a decimal string and is decoded once at the HTTP boundary.
+- **Spend**: the service-account budget carries the spend of the current cycle (`spentMicroCents`), the limit (`limitMicroCents`, `null` while the account has no cap) and the cycle reset (`resetsAt`). A capped account reports the share it used plus "$spent of $limit"; an uncapped one reports the amount it spent, because there is no share to report. The Console counts `1_000_000` micro-cents per cent, so `100_000_000` is one USD. This read is best-effort: a workspace without a service account has no budget, and that is not an error; the monthly window then falls back to the 30-day request count.
+- **Models**: the per-model request counters of the last 30 days are reported as `usage.models`, one window per model.
+- **Trusted origin**: requests go only to the fixed Console API base URL with `redirect: 'error'`, so the bearer token is never forwarded to another origin.
+- **Failure classes stay distinct**: not configured (no credential), rejected credential (401/403), and a malformed or failed response each return their own configured flag and message.
+- Keep `packages/web/server/lib/quota/providers/opencode.js` and `packages/vscode/src/opencodeZenQuota.ts` in sync — the VS Code extension duplicates this logic rather than importing the web provider.
 
 ## Codex credit balance semantics
 

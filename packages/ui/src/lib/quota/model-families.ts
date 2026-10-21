@@ -48,8 +48,18 @@ const ANTIGRAVITY_MODEL_FAMILIES: ModelFamily[] = [
   },
 ];
 
+const OPENCODE_MODEL_FAMILIES: ModelFamily[] = [
+  {
+    id: 'opencode-models',
+    label: 'Zen Models',
+    matcher: () => true,
+    order: 1,
+  },
+];
+
 const PROVIDER_MODEL_FAMILIES: Partial<Record<QuotaProviderId, ModelFamily[]>> = {
   antigravity: ANTIGRAVITY_MODEL_FAMILIES,
+  opencode: OPENCODE_MODEL_FAMILIES,
 };
 
 function getModelFamily(modelName: string, providerId: QuotaProviderId): ModelFamily | null {
@@ -111,6 +121,8 @@ const GEMINI_3_MODEL = /^gemini-3[.-]/;
  * - Gemini 3.x models
  * - All Claude models
  * For the Claude provider: every model it reports a limit for.
+ * For the OpenCode Zen provider: every model the workspace served, so the
+ * first toggle keeps the rest of the list in view.
  */
 export function getDefaultModels(
   providerId: QuotaProviderId,
@@ -120,6 +132,8 @@ export function getDefaultModels(
     // Anthropic only reports a model here when that model has its own plan
     // limit, so every one it names is worth showing by default.
     if (providerId === 'claude') return true;
+    // The Zen workspace reports the models it served, all of them useful.
+    if (providerId === 'opencode') return true;
     const lower = model.toLowerCase();
     // Handle gemini/ and antigravity/ prefixes
     const modelName = lower.includes('/') ? lower.split('/')[1] : lower;

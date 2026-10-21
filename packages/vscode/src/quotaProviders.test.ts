@@ -338,6 +338,133 @@ describe('OpenCode Go quota provider — Console OAuth (VS Code parity)', () => 
   });
 });
 
+describe('OpenCode Zen quota provider (VS Code parity)', () => {
+  const CONSOLE_API_BASE = 'https://opencode.ai/console/api';
+
+  afterEach(() => {
+    configureOpenCodeCredentials({ list: async () => baseCredentialList() });
+  });
+
+  const summaryPayload = (requests: number) => ({
+    totalRequests: String(requests),
+    totalInputTokens: '100',
+    totalOutputTokens: '50',
+    totalCostMicroCents: '0',
+    services: [],
+  });
+
+  const budgetPayload = [{
+    scope: 'service-account',
+    serviceAccountId: 'svcacct_01TEST',
+    name: 'Legacy: miles.buckton@gmail.com',
+    limitMicroCents: null,
+    spentMicroCents: '0',
+    exceeded: false,
+    resetsAt: '2026-11-01T00:00:00.000Z',
+  }];
+
+  const modelsPayload = {
+    items: [
+      { model: 'big-pickle', provider: 'opencode', totalRequests: '6979', totalCostMicroCents: '0' },
+      { model: 'minimax-m3.1-flash-free', provider: 'opencode', totalRequests: '6108', totalCostMicroCents: '0' },
+    ],
+    pageInfo: { page: 1, pageSize: 50, total: 2, pageCount: 1 },
+  };
+
+  const stubConsole = () => {
+    const requests: string[] = [];
+    stubFetchReturning(async (url, _init) => {
+      requests.push(url);
+      if (url === `${CONSOLE_API_BASE}/usage/summary?range=24h`) return mockResponse(summaryPayload(292));
+      if (url === `${CONSOLE_API_BASE}/usage/summary?range=7d`) return mockResponse(summaryPayload(3155));
+      if (url === `${CONSOLE_API_BASE}/usage/summary?range=30d`) return mockResponse(summaryPayload(10802));
+      if (url.startsWith(`${CONSOLE_API_BASE}/usage/models`)) return mockResponse(modelsPayload);
+      if (url === `${CONSOLE_API_BASE}/budgets/service-accounts/status`) return mockResponse(budgetPayload);
+      return mockResponse({}, { ok: false, status: 404 });
+    });
+    return requests;
+  };
+
+  describe('with an API key on the Console integration', () => {
+    beforeEach(() => {
+      configureOpenCodeCredentials({ list: async () => [key('opencode')] });
+    });
+
+    afterEach(() => {
+      configureOpenCodeCredentials({ list: async () => baseCredentialList() });
+    });
+
+    test('reports the request counters, the spend and the models', async () => {
+      stubConsole();
+
+      const result = await fetchQuotaForProvider('opencode');
+
+      assert.equal(result.ok, true);
+      assert.equal(result.providerName, 'OpenCode Zen');
+      assert.equal(result.usage!.windows.daily!.valueLabel, '292 requests');
+      assert.equal(result.usage!.windows.weekly!.valueLabel, '3,155 requests');
+      assert.equal(result.usage!.windows.monthly!.valueLabel, '$0.00 spent');
+      assert.equal(result.usage!.windows.monthly!.resetAt, Date.parse('2026-11-01T00:00:00.000Z'));
+      assert.equal(result.usage!.models!['big-pickle']!.windows.monthly!.valueLabel, '6,979 requests');
+    });
+
+    test('sends the workspace key and never follows a redirect', async () => {
+      let request: RequestInit | undefined;
+      stubFetchReturning(async (_url, init) => {
+        request = init;
+        return mockResponse(summaryPayload(1));
+      });
+
+      await fetchQuotaForProvider('opencode');
+
+      assert.equal(new Headers(request?.headers).get('Authorization'), 'Bearer test-token');
+      assert.equal(request?.redirect, 'error');
+    });
+
+    test('reports a rejected credential as an authentication failure', async () => {
+      stubFetchReturning(async () => mockResponse({}, { ok: false, status: 401 }));
+
+      const result = await fetchQuotaForProvider('opencode');
+
+      assert.equal(result.configured, true);
+      assert.equal(result.error, 'OpenCode Zen authentication failed');
+    });
+  });
+
+  describe('with a Console sign-in', () => {
+    beforeEach(() => {
+      configureOpenCodeCredentials({ list: async () => [consoleOAuth()] });
+    });
+
+    afterEach(() => {
+      configureOpenCodeCredentials({ list: async () => baseCredentialList() });
+    });
+
+    test('uses the Console token and organization', async () => {
+      let request: RequestInit | undefined;
+      stubFetchReturning(async (_url, init) => {
+        request = init;
+        return mockResponse(summaryPayload(5));
+      });
+
+      const result = await fetchQuotaForProvider('opencode');
+
+      assert.equal(result.ok, true);
+      assert.equal(new Headers(request?.headers).get('Authorization'), 'Bearer console-token');
+      assert.equal(new Headers(request?.headers).get('x-org-id'), 'org_TESTORG123');
+    });
+  });
+
+  test('reports a workspace without a credential as not configured', async () => {
+    configureOpenCodeCredentials({ list: async () => [] });
+
+    const result = await fetchQuotaForProvider('opencode');
+
+    assert.equal(result.configured, false);
+    assert.equal(result.error, 'Not configured');
+  });
+});
+
 describe('OpenRouter quota provider (VS Code parity)', () => {
   const documentedPayload = {
     data: {
