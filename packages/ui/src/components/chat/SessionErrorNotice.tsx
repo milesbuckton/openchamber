@@ -6,6 +6,10 @@ import { useI18n } from '@/lib/i18n';
 import { showOpenCodeStatus } from '@/lib/openCodeStatus';
 import { DiagnosticDialogAvailableContext } from '@/lib/diagnostics/dialog-availability';
 import { getLastConversationMessage, type Message, type Part, type Session, type StructuredError } from '@/lib/opencode/model';
+import { antigravityErrorFrom, classifyAntigravityError } from '@/lib/opencode/antigravity-error';
+import { isAntigravityModelId } from '@/lib/opencode/antigravity';
+import { formatQuotaResetLabel } from '@/lib/quota/utils';
+import { useConfigStore } from '@/stores/useConfigStore';
 import { useLatestSessionError } from '@/sync/notification-store';
 import { responseBodyOf, summarizeOpenCodeError } from '@/sync/session-error-log';
 import { useDirectoryStore, useSessionStatus, useSessionStatusSnapshotReady } from '@/sync/sync-context';
@@ -143,6 +147,16 @@ export const SessionErrorNotice: React.FC<SessionErrorNoticeProps> = ({ sessionI
   const statusSnapshotReady = useSessionStatusSnapshotReady(directory, sessionId);
   const lastMessage = useLastMessageState(sessionId, directory);
   const storedFailure = useStoredFailure(sessionId, directory);
+  // The models the Antigravity plugin serves, named for the notice that says
+  // which ones to pick instead.
+  const providers = useConfigStore((state) => state.providers);
+  const antigravityModelNames = React.useMemo(
+    () => providers
+      .flatMap((provider) => provider.models)
+      .filter((model) => isAntigravityModelId(model.modelID ?? model.id))
+      .map((model) => model.name),
+    [providers],
+  );
 
   // An omitted status means idle only after a successful status snapshot:
   // after a reload the last prompt is hydrated before the runtime reports
@@ -198,6 +212,8 @@ export const SessionErrorNotice: React.FC<SessionErrorNoticeProps> = ({ sessionI
   let detail: string;
   let hasDetails = true;
   let responseBody: string | null = null;
+  const liveError = reportedError?.error ?? null;
+  const recordedError = storedFailureApplies ? storedFailure?.recordedError ?? null : null;
   if (reportedError) {
     title = t('chat.sessionError.title');
     hasDetails = Boolean(reportedError.error?.message);
@@ -219,6 +235,40 @@ export const SessionErrorNotice: React.FC<SessionErrorNoticeProps> = ({ sessionI
     title = t('chat.sessionError.noReply');
     hasDetails = false;
     detail = t('chat.sessionError.noDetails');
+  }
+
+  // The Antigravity plugin reports its own failures in the plugin's words.
+  // They get a plain account of what is wrong and when the account can serve
+  // again, the way the Antigravity app puts it.
+  const antigravity = classifyAntigravityError(
+    liveError
+      ? { message: liveError.message, body: liveError.responseBody ?? null }
+      : antigravityErrorFrom(recordedError),
+  );
+  if (antigravity) {
+    const reset = antigravity.resetAt ? formatQuotaResetLabel(antigravity.resetAt) : '';
+    if (antigravity.kind === 'unsupported-model') {
+      title = t('chat.sessionError.antigravity.unsupportedModel.title');
+      detail = antigravityModelNames.length > 0
+        ? t('chat.sessionError.antigravity.unsupportedModel.detail', { models: antigravityModelNames.join(', ') })
+        : t('chat.sessionError.antigravity.unsupportedModel.detailNoModels');
+    } else if (antigravity.kind === 'quota') {
+      title = t('chat.sessionError.antigravity.quota.title');
+      detail = reset
+        ? t('chat.sessionError.antigravity.quota.detail', { reset })
+        : t('chat.sessionError.antigravity.quota.detailNoReset');
+    } else if (antigravity.kind === 'pool-unavailable') {
+      title = t('chat.sessionError.antigravity.poolUnavailable.title');
+      detail = reset
+        ? t('chat.sessionError.antigravity.poolUnavailable.detail', { reset })
+        : t('chat.sessionError.antigravity.poolUnavailable.detailNoReset');
+    } else {
+      title = t('chat.sessionError.antigravity.notAuthenticated.title');
+      detail = t('chat.sessionError.antigravity.notAuthenticated.detail');
+    }
+    // The plugin's own words stay available under the details.
+    const raw = liveError?.message ?? recordedError?.message ?? null;
+    responseBody = responseBody ?? raw;
   }
 
   return (

@@ -89,7 +89,7 @@ const providerResponse = (id: string, modelId = `${id}-model`, variantIds?: stri
   default: { providerID: id, id: modelId },
 });
 
-type TestProviderResponse = ReturnType<typeof providerResponse>;
+type TestProviderResponse = ReturnType<typeof providerResponse> & { antigravityProviderIds?: string[] };
 
 const testAgent = (name: string, options?: Partial<TestAgent>): Agent => ({
   id: name,
@@ -818,6 +818,74 @@ describe('useConfigStore provider persistence', () => {
     await useConfigStore.getState().loadProviders({ source: 'test:empty-selection' });
 
     expect(useConfigStore.getState().selectedProviderId).toBe('live');
+  });
+
+  test('a selected model the Antigravity plugin took the provider over moves to its own model', async () => {
+    // The plugin registers `antigravity-` twins under the same provider and
+    // refuses the native ids. A selection made before it took over would fail
+    // every send, so it moves to the twin the plugin serves.
+    useConfigStore.setState({
+      activeDirectoryKey: DIRECTORY,
+      currentProviderId: 'google',
+      currentModelId: 'gemini-3.8-flash',
+      selectionSource: 'manual',
+      directoryScoped: {},
+    });
+    getProvidersForConfigImpl = async () => ({
+      providers: [providerInfo('google')],
+      models: [model('google', 'antigravity-gemini-3.8-flash')],
+      default: { providerID: 'google', id: 'antigravity-gemini-3.8-flash' },
+      antigravityProviderIds: ['google'],
+    });
+
+    await useConfigStore.getState().loadProviders({ source: 'test:antigravity-twin' });
+
+    const state = useConfigStore.getState();
+    expect(state.currentProviderId).toBe('google');
+    expect(state.currentModelId).toBe('antigravity-gemini-3.8-flash');
+    expect(state.providers[0]?.models.map((entry) => entry.modelID)).toEqual(['antigravity-gemini-3.8-flash']);
+  });
+
+  test('a selected model with no Antigravity counterpart falls back to a model the provider serves', async () => {
+    useConfigStore.setState({
+      activeDirectoryKey: DIRECTORY,
+      currentProviderId: 'google',
+      currentModelId: 'gemini-3-pro-image',
+      selectionSource: 'manual',
+      directoryScoped: {},
+    });
+    getProvidersForConfigImpl = async () => ({
+      providers: [providerInfo('google')],
+      models: [model('google', 'antigravity-claude-opus-5-5')],
+      default: { providerID: 'google', id: 'antigravity-claude-opus-5-5' },
+      antigravityProviderIds: ['google'],
+    });
+
+    await useConfigStore.getState().loadProviders({ source: 'test:antigravity-no-twin' });
+
+    expect(useConfigStore.getState().currentModelId).toBe('antigravity-claude-opus-5-5');
+  });
+
+  test('a selection on a provider the plugin does not own is left alone', async () => {
+    // With a real Google API key stored the plugin takes nothing over: the
+    // native model stays selectable and stays selected.
+    useConfigStore.setState({
+      activeDirectoryKey: DIRECTORY,
+      currentProviderId: 'google',
+      currentModelId: 'gemini-3.8-flash',
+      selectionSource: 'manual',
+      directoryScoped: {},
+    });
+    getProvidersForConfigImpl = async () => ({
+      providers: [providerInfo('google')],
+      models: [model('google', 'gemini-3.8-flash'), model('google', 'antigravity-gemini-3.8-flash')],
+      default: { providerID: 'google', id: 'gemini-3.8-flash' },
+      antigravityProviderIds: [],
+    });
+
+    await useConfigStore.getState().loadProviders({ source: 'test:antigravity-not-owned' });
+
+    expect(useConfigStore.getState().currentModelId).toBe('gemini-3.8-flash');
   });
 
   test('changing the chat provider leaves the settings provider selection alone', async () => {

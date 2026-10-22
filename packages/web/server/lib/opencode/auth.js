@@ -199,6 +199,18 @@ export async function getProviderAuth(providerId) {
 }
 
 /**
+ * The providers the Antigravity plugin owns, derived from OpenCode's stored
+ * credentials. Answers only provider IDs so secrets never leave the server.
+ */
+export async function readAntigravityOwnedProviderIds() {
+  const current = source;
+  if (!current) throw new Error('OpenCode is not connected yet');
+  const entries = await current.list();
+  const { antigravityOwnedProviderIds } = await import('./antigravity-models.js');
+  return Array.from(antigravityOwnedProviderIds(entries));
+}
+
+/**
  * The browser login OpenCode has selected for one integration, with the method
  * it was made by (`chatgpt-token-sharing`, `chatgpt-browser`, ...), or null
  * when the selected credential is a key or there is none. An isolated space

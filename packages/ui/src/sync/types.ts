@@ -116,7 +116,7 @@ export const DIR_IDLE_TTL_MS = 20 * 60 * 1000
 export const SESSION_CACHE_LIMIT = 20
 
 const EMPTY_PATH: Path = { directory: "", worktree: "", home: "" }
-const EMPTY_PROVIDER_CATALOG: ProviderCatalog = { providers: [], models: [] }
+const EMPTY_PROVIDER_CATALOG: ProviderCatalog = { providers: [], models: [], antigravityProviderIds: [] }
 
 export const INITIAL_STATE: State = {
   project: "",

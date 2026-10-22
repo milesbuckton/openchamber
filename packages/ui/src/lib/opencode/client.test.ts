@@ -809,30 +809,20 @@ describe("messages and config", () => {
   })
 
   test("getProvidersForConfig gathers providers, models, and the default", async () => {
-    responses.push(
-      (request) =>
-        request.url.pathname === "/api/provider"
-          ? json({ location: {}, data: [{ id: "openai", name: "OpenAI" }] })
-          : request.url.pathname === "/api/model"
-            ? json({ location: {}, data: [{ id: "openai/x", modelID: "x", providerID: "openai" }] })
-            : json({ location: {}, data: { id: "openai/x", modelID: "x", providerID: "openai" } }),
-      (request) =>
-        request.url.pathname === "/api/provider"
-          ? json({ location: {}, data: [{ id: "openai", name: "OpenAI" }] })
-          : request.url.pathname === "/api/model"
-            ? json({ location: {}, data: [{ id: "openai/x", modelID: "x", providerID: "openai" }] })
-            : json({ location: {}, data: { id: "openai/x", modelID: "x", providerID: "openai" } }),
-      (request) =>
-        request.url.pathname === "/api/provider"
-          ? json({ location: {}, data: [{ id: "openai", name: "OpenAI" }] })
-          : request.url.pathname === "/api/model"
-            ? json({ location: {}, data: [{ id: "openai/x", modelID: "x", providerID: "openai" }] })
-            : json({ location: {}, data: { id: "openai/x", modelID: "x", providerID: "openai" } }),
-    )
+    const answer = (request: CapturedRequest) =>
+      request.url.pathname === "/api/provider"
+        ? json({ location: {}, data: [{ id: "openai", name: "OpenAI" }] })
+        : request.url.pathname === "/api/model"
+          ? json({ location: {}, data: [{ id: "openai/x", modelID: "x", providerID: "openai" }] })
+          : request.url.pathname === "/api/provider/antigravity-owned"
+            ? json({ providerIds: [] })
+            : json({ location: {}, data: { id: "openai/x", modelID: "x", providerID: "openai" } })
+    responses.push(answer, answer, answer, answer)
     const catalog = await opencodeClient.getProvidersForConfig("/repo/app")
     expect(catalog.providers).toEqual([{ id: "openai", name: "OpenAI" }])
     expect(catalog.models).toHaveLength(1)
     expect(catalog.default).toEqual({ id: "x", providerID: "openai" })
+    expect(catalog.antigravityProviderIds).toEqual([])
   })
 
   for (const { label, variants } of [
@@ -847,8 +837,10 @@ describe("messages and config", () => {
           ? json({ location: {}, data: [{ id: "opencode-go", name: "OpenCode Go" }] })
           : request.url.pathname === "/api/model"
             ? json({ location: {}, data: [model] })
-            : json({ location: {}, data: model })
-      responses.push(answer, answer, answer)
+            : request.url.pathname === "/api/provider/antigravity-owned"
+              ? json({ providerIds: [] })
+              : json({ location: {}, data: model })
+      responses.push(answer, answer, answer, answer)
 
       const catalog = await opencodeClient.getProvidersForConfig("/repo/app")
       expect(catalog.models[0]?.variants.map((variant: { id: string }) => variant.id) ?? []).toEqual([])
@@ -864,22 +856,27 @@ describe("messages and config", () => {
         ? json({ location: {}, data: [] })
         : request.url.pathname === "/api/model"
           ? json({ location: {}, data: [model] })
-          : json({ location: {}, data: model })
-    responses.push(answer, answer, answer)
+          : request.url.pathname === "/api/provider/antigravity-owned"
+            ? json({ providerIds: [] })
+            : json({ location: {}, data: model })
+    responses.push(answer, answer, answer, answer)
 
     const catalog = await opencodeClient.getProvidersForConfig("/repo/app")
     expect(catalog.models[0]?.variants.map((variant: { id: string }) => variant.id)).toEqual(["high", "low"])
     expect(catalog.models[0]).toEqual(model)
   })
 
+  })
   test("a fresh provider read waits out the one in flight and reads again", async () => {
     const answer = (request: CapturedRequest) =>
       request.url.pathname === "/api/provider"
         ? json({ location: {}, data: [{ id: "openai", name: "OpenAI" }] })
         : request.url.pathname === "/api/model"
           ? json({ location: {}, data: [{ id: "openai/x", modelID: "x", providerID: "openai" }] })
-          : json({ location: {}, data: { id: "openai/x", modelID: "x", providerID: "openai" } })
-    responses.push(answer, answer, answer, answer, answer, answer)
+          : request.url.pathname === "/api/provider/antigravity-owned"
+            ? json({ providerIds: [] })
+            : json({ location: {}, data: { id: "openai/x", modelID: "x", providerID: "openai" } })
+    responses.push(answer, answer, answer, answer, answer, answer, answer, answer)
     const before = requests.length
 
     const first = opencodeClient.getProvidersForConfig("/repo/app")
@@ -887,8 +884,8 @@ describe("messages and config", () => {
     const fresh = opencodeClient.getProvidersForConfig("/repo/app", { fresh: true })
     const [firstCatalog, joinedCatalog, freshCatalog] = await Promise.all([first, joined, fresh])
 
-    // One catalog read is three requests: the joined call adds none, the fresh one three more.
-    expect(requests.length - before).toBe(6)
+    // One catalog read is four requests: the joined call adds none, the fresh one four more.
+    expect(requests.length - before).toBe(8)
     expect(joinedCatalog).toBe(firstCatalog)
     expect(freshCatalog).not.toBe(firstCatalog)
   })
@@ -900,13 +897,15 @@ describe("providers of an isolated space", () => {
       ? json({ location: {}, data: [{ id: "lighthouse", name: "Lighthouse" }] })
       : request.url.pathname.endsWith("/model")
         ? json({ location: {}, data: [{ id: "lighthouse/q", modelID: "q", providerID: "lighthouse" }] })
-        : json({ location: {}, data: { id: "lighthouse/q", modelID: "q", providerID: "lighthouse" } })
+        : request.url.pathname.endsWith("/provider/antigravity-owned")
+          ? json({ providerIds: [] })
+          : json({ location: {}, data: { id: "lighthouse/q", modelID: "q", providerID: "lighthouse" } })
 
   test("are the host's in the project the space was made from, so a provider of that project's own config is there", async () => {
     const space = "/spaces/a1b2c3d4e5f6/app"
     useSpacesStore.getState().applyMarks([{ id: "a1b2c3d4e5f6", name: "One", state: "complete", projectDirectory: "/repo/app", directory: space }])
     try {
-      responses.push(providerAnswer, providerAnswer, providerAnswer)
+      responses.push(providerAnswer, providerAnswer, providerAnswer, providerAnswer)
       const before = requests.length
       const catalog = await opencodeClient.getProvidersForConfig(space)
       expect(catalog.providers).toEqual([{ id: "lighthouse", name: "Lighthouse" }])
@@ -925,8 +924,10 @@ describe("providers of an isolated space", () => {
         ? json({ location: {}, data: [{ id: "anthropic", name: "Anthropic" }] })
         : request.url.pathname.endsWith("/model")
           ? json({ location: {}, data: [{ id: "anthropic/x", modelID: "x", providerID: "anthropic" }] })
-          : json({ location: {}, data: { id: "anthropic/x", modelID: "x", providerID: "anthropic" } })
-    responses.push(answer, answer, answer)
+          : request.url.pathname.endsWith("/provider/antigravity-owned")
+            ? json({ providerIds: [] })
+            : json({ location: {}, data: { id: "anthropic/x", modelID: "x", providerID: "anthropic" } })
+    responses.push(answer, answer, answer, answer)
     const before = requests.length
     const catalog = await opencodeClient.getProvidersForConfig(space)
     expect(catalog.providers).toEqual([{ id: "anthropic", name: "Anthropic" }])

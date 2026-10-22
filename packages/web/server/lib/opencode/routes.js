@@ -323,6 +323,17 @@ export const registerOpenCodeRoutes = (app, dependencies) => {
     }
   });
 
+  app.get('/api/provider/antigravity-owned', async (_req, res) => {
+    try {
+      const { readAntigravityOwnedProviderIds } = await getAuthLibrary();
+      const providerIds = await readAntigravityOwnedProviderIds();
+      return res.json({ providerIds });
+    } catch (error) {
+      console.error('Failed to read Antigravity owned providers:', error);
+      return res.status(500).json({ error: 'Failed to read Antigravity owned providers' });
+    }
+  });
+
   app.get('/api/provider/:providerId/source', async (req, res) => {
     try {
       const { providerId } = req.params;

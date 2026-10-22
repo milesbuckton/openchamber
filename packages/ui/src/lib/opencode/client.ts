@@ -38,6 +38,7 @@ import { getRuntimeKey } from "@/lib/runtime-switch"
 import { getRegisteredRuntimeAPIs } from "@/contexts/runtimeAPIRegistry"
 import { markStartupTrace } from "@/lib/startupTrace"
 import { assertProviderCircuitClosed, recordProviderError, recordProviderSuccess } from "./provider-tracker"
+import { isUsableModel, usableModels } from "./antigravity"
 import { normalizePath } from "@/lib/pathNormalization"
 import { PART_SHELLS_HEADER, PART_SHELLS_VERSION } from "./toolContentShells"
 import { isAutoModel } from "@/lib/routing/autoModel"
@@ -510,6 +511,12 @@ export type ProviderCatalog = {
   providers: Provider[]
   models: Model[]
   default?: ModelRef
+  /**
+   * The providers the Antigravity plugin holds the credential for. It serves
+   * only the models it registered for them, so the other models of those
+   * providers are left out of `models`.
+   */
+  antigravityProviderIds: string[]
 }
 
 /**
@@ -2014,17 +2021,32 @@ class OpencodeService {
     const request = (async () => {
       const client = this.clientFor(effectiveDirectory)
       const providerClient = isSpaceDirectory(effectiveDirectory) ? this.hostClientOfSpace(effectiveDirectory) : client
-      const [models, fallback, providers] = await Promise.all([
+      const [models, fallback, providers, ownedAntigravityResult] = await Promise.all([
         call("model.list", () => client.model.list().then((r) => r.data)),
         call("model.default", () => client.model.default().then((r) => r.data)).catch(() => undefined),
         call("provider.list", () => providerClient.provider.list().then((r) => r.data)),
+        // The Antigravity plugin takes a provider over when it holds that
+        // provider's credential, and then serves only the models it registered.
+        // We read only the sanitized owned provider IDs from OpenChamber server/bridge
+        // so raw credentials never cross the wire.
+        runtimeFetch("/api/provider/antigravity-owned")
+          .then(async (res) => (res.ok ? ((await res.json()) as { providerIds?: string[] }) : undefined))
+          .catch(() => undefined),
       ])
+      const ownedProviders = new Set(
+        Array.isArray(ownedAntigravityResult?.providerIds) ? ownedAntigravityResult.providerIds : []
+      )
+      const usable = usableModels(models, ownedProviders)
+      const defaultModel = fallback
+        ? { id: fallback.modelID, providerID: fallback.providerID }
+        : undefined
       return compact({
         providers,
-        models: models.map((model) => (
+        models: usable.map((model) => (
           Array.isArray(model.variants) ? model : { ...model, variants: [] }
         )),
-        default: fallback ? { id: fallback.modelID, providerID: fallback.providerID } : undefined,
+        default: defaultModel && isUsableModel(defaultModel, ownedProviders) ? defaultModel : undefined,
+        antigravityProviderIds: [...ownedProviders],
       })
     })()
 

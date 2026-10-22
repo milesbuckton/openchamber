@@ -8,6 +8,7 @@ import { openCodeCredentialSource as fromConnection, type CredentialSource } fro
 export {
   configureOpenCodeCredentials,
   getProviderAuth,
+  readAntigravityOwnedProviderIds,
   readOpenCodeCredentials,
 } from '../../web/server/lib/opencode/auth.js';
 

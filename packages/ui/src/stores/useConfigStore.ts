@@ -8,6 +8,7 @@ import { findCatalogModel, type Provider, type Model, type Agent, type Config } 
 import type { DesktopSettings } from "@/lib/desktop";
 import type { CatalogKind } from "@/lib/opencode/events";
 import { opencodeClient, type OpencodeHealthProbe } from "@/lib/opencode/client";
+import { ANTIGRAVITY_MODEL_PREFIX } from "@/lib/opencode/antigravity";
 import { isSameProjectConfigError, readProjectConfigError, type ProjectConfigError } from "@/lib/opencode/configError";
 import { scopeMatches, subscribeToConfigChanges } from "@/lib/configSync";
 import type { ModelMetadata } from "@/types";
@@ -371,6 +372,33 @@ const resolveFallbackModel = (
         return { providerId: firstProvider.id, modelId: firstModel.modelID };
     }
     return null;
+};
+
+/**
+ * The Antigravity plugin holds the credential of a provider and answers only the
+ * models it registered for it; the provider's own models are refused at request
+ * time ("This request cannot use Antigravity"). A selection naming such a model
+ * moves to the plugin's id for the same model. A model the plugin does not
+ * register leaves the selection to the ordinary fallback, which picks a model
+ * that can serve the request.
+ */
+const resolveAntigravityModelSelection = (
+    providers: ProviderWithModelList[],
+    resolved: ProviderModelSelection,
+    antigravityProviderIds: ReadonlySet<string>,
+    fallbackPrefs: FallbackModelPrefs,
+): ProviderModelSelection => {
+    if (!resolved) return resolved;
+    if (!antigravityProviderIds.has(resolved.providerId)) return resolved;
+    // Still offered by the provider: the plugin did not take it over.
+    if (hasProviderModel(providers, resolved.providerId, resolved.modelId)) return resolved;
+
+    const twinId = `${ANTIGRAVITY_MODEL_PREFIX}${resolved.modelId}`;
+    if (hasProviderModel(providers, resolved.providerId, twinId)) {
+        return { providerId: resolved.providerId, modelId: twinId };
+    }
+
+    return resolveFallbackModel(providers, fallbackPrefs.hiddenModels);
 };
 
 type DefaultAgentModelSelection = {
@@ -2229,6 +2257,9 @@ export const useConfigStore = create<ConfigStore>()(
                             const defaults: { [key: string]: string } = apiResult?.default
                                 ? { [apiResult.default.providerID]: apiResult.default.id }
                                 : {};
+                            // The providers the Antigravity plugin holds the credential for.
+                            // It serves only the models it registered for them.
+                            const antigravityProviderIds = new Set(apiResult?.antigravityProviderIds ?? []);
 
                             const modelsByProvider = new Map<string, ProviderModel[]>();
                             for (const model of catalogModels) {
@@ -2277,6 +2308,7 @@ export const useConfigStore = create<ConfigStore>()(
                                     ? state.currentVariant
                                     : baseSnapshot.currentVariant;
                                 const projectDefaults = getProjectDefaultsForConfigDirectory(fromDirectoryKey(directoryKey));
+                                const fallbackPrefs = readFallbackModelPrefs();
                                 const resolvedModel = resolveProviderModelSelection({
                                     providers: nextProviders,
                                     currentProviderId,
@@ -2286,8 +2318,17 @@ export const useConfigStore = create<ConfigStore>()(
                                     settingsDefaultModel: projectDefaults.projectDefaultModel || state.settingsDefaultModel,
                                     settingsDefaultVariant: projectDefaults.projectDefaultModel ? projectDefaults.projectDefaultVariant : state.settingsDefaultVariant,
                                     allowFallback: state.settingsDefaultsLoaded,
-                                    fallbackPrefs: readFallbackModelPrefs(),
+                                    fallbackPrefs,
                                 });
+                                // A model the Antigravity plugin refuses is repaired here, so
+                                // the chat sends the model the plugin serves instead of the
+                                // provider's own id for it.
+                                const usableModel = resolveAntigravityModelSelection(
+                                    nextProviders,
+                                    resolvedModel,
+                                    antigravityProviderIds,
+                                    fallbackPrefs,
+                                );
                                 const currentSelectedProviderId = state.activeDirectoryKey === directoryKey
                                     ? state.selectedProviderId
                                     : baseSnapshot.selectedProviderId;
@@ -2299,7 +2340,7 @@ export const useConfigStore = create<ConfigStore>()(
                                 // The add-provider sentinel is kept for the same reason (issue #1765).
                                 const selectedProviderId = currentSelectedProviderId
                                     ? currentSelectedProviderId
-                                    : (resolvedModel?.providerId ?? nextProviders[0]?.id ?? "");
+                                    : (usableModel?.providerId ?? nextProviders[0]?.id ?? "");
 
                                 const heldVariantSelection = state.activeDirectoryKey === directoryKey
                                     ? state.currentVariantSelection
@@ -2310,13 +2351,13 @@ export const useConfigStore = create<ConfigStore>()(
                                     providers: nextProviders,
                                     providersLoaded: true,
                                     defaultProviders: nextDefaults,
-                                    currentProviderId: resolvedModel?.providerId ?? "",
-                                    currentModelId: resolvedModel?.modelId ?? "",
-                                    currentVariant: variantAfterResolve(heldVariantSelection, resolvedModel?.variant),
+                                    currentProviderId: usableModel?.providerId ?? "",
+                                    currentModelId: usableModel?.modelId ?? "",
+                                    currentVariant: variantAfterResolve(heldVariantSelection, usableModel?.variant),
                                     currentVariantSelection: (state.activeDirectoryKey === directoryKey ? state.selectionSource : baseSnapshot.selectionSource) === 'manual'
                                         || pickedVariant !== undefined
                                         ? heldVariantSelection
-                                        : { override: undefined, inherited: resolvedModel?.variant },
+                                        : { override: undefined, inherited: usableModel?.variant },
                                     selectedProviderId,
                                 };
 

@@ -29,6 +29,7 @@ export function projectCredentialEntries(entries: CredentialEntry[]): LegacyAuth
 export function readOpenCodeCredentials(): Promise<LegacyAuthFile>;
 export function getProviderAuth(providerId: string): Promise<LegacyAuthEntry | null>;
 export function readOpenCodeUsageLimits(): Promise<UsageLimitsInfo | null>;
+export function readAntigravityOwnedProviderIds(): Promise<string[]>;
 
 /** A browser login as OpenCode stores it, read for an isolated space's gatekeeper. */
 export type StoredLogin = {

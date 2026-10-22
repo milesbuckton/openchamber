@@ -1305,6 +1305,17 @@ const handleLocalApiRequest = async (input: RequestInfo | URL, url: URL, init: R
     }
   }
 
+  // Handle Antigravity owned providers lookup: GET /api/provider/antigravity-owned
+  if (pathname === '/api/provider/antigravity-owned' && method === 'GET') {
+    try {
+      const data = await sendBridgeMessage('api:provider/antigravity-owned:get');
+      return new Response(JSON.stringify(data), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return new Response(JSON.stringify({ error: message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+    }
+  }
+
   // Handle provider source lookup: GET /api/provider/:providerId/source
   const providerSourceMatch = pathname.match(/^\/api\/provider\/([^/]+)\/source$/);
   if (providerSourceMatch && method === 'GET') {

@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { randomUUID } from 'crypto';
 import { getProviderSources, getStoredProviderConfig, readConfig, upsertProviderConfig } from './opencodeConfig';
-import { getProviderAuth } from './opencodeAuth';
+import { getProviderAuth, readAntigravityOwnedProviderIds } from './opencodeAuth';
 import { OpenCode } from '@opencode/client';
 import { asSessionId, asSessionIdList, asSessionMetadata, asTimestamp, parseJson, type JsonValue, type SessionArchiveOnOpenCode, type SessionMetadataOnOpenCode, type SessionStateStore } from './openchamberSessionState';
 import type { OpenCodeManager } from './opencode';
@@ -454,6 +454,16 @@ export async function handleSystemBridgeMessage(
         sources.auth.exists = Boolean(await getProviderAuth(providerId));
         const config = getStoredProviderConfig(providerId, workingDirectory);
         return { id, type, success: true, data: { providerId, sources, config } };
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return { id, type, success: false, error: errorMessage };
+      }
+    }
+
+    case 'api:provider/antigravity-owned:get': {
+      try {
+        const providerIds = await readAntigravityOwnedProviderIds();
+        return { id, type, success: true, data: { providerIds } };
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         return { id, type, success: false, error: errorMessage };

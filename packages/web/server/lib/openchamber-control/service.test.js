@@ -108,6 +108,34 @@ describe('OpenChamber control service', () => {
     expect(paged).toMatchObject({ models: [{ id: 'a/new' }], total: 2, next: 1 });
   });
 
+  it('leaves out native models when the Antigravity plugin owns the provider', async () => {
+    const model = (providerID, id, released, family) => ({
+      providerID, id, name: id, family, time: { released }, variants: [], cost: [], status: 'active',
+    });
+    const { service, client } = createService({
+      readSettingsFromDiskMigrated: vi.fn(async () => ({
+        favoriteModels: [],
+        recentModels: [],
+        hiddenModels: [],
+      })),
+    });
+    client.model = { list: vi.fn(async () => ({ data: [
+      model('google', 'gemini-3.8-flash', 3, 'gemini'),
+      model('google', 'antigravity-gemini-3.8-flash', 2),
+      model('kilo', 'some-model', 1, 'glm'),
+    ] })) };
+    client.provider = { list: vi.fn(async () => ({ data: [{ id: 'google', name: 'Antigravity' }, { id: 'kilo', name: 'Kilo' }] })) };
+    client.credential = { list: vi.fn(async () => ({ data: [{
+      id: 'cred_1', integrationID: 'google', label: 'Antigravity', active: true,
+      value: { type: 'oauth', methodID: 'antigravity-auth-pool-browser' },
+    }] })) };
+
+    const found = await service.execute('models.search', { all: true }, '/repo');
+    // The plugin would refuse the native id, so only its own models and the
+    // providers it does not own are offered.
+    expect(found.models.map(({ id }) => id)).toEqual(['google/antigravity-gemini-3.8-flash', 'kilo/some-model']);
+  });
+
   it('maps schedule creation into the shared scheduled-task service', async () => {
     const { service, scheduledTaskService } = createService();
     scheduledTaskService.upsert.mockResolvedValue({ task: { id: 'task-1' }, created: true });
