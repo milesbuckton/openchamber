@@ -866,7 +866,6 @@ describe("messages and config", () => {
     expect(catalog.models[0]).toEqual(model)
   })
 
-  })
   test("a fresh provider read waits out the one in flight and reads again", async () => {
     const answer = (request: CapturedRequest) =>
       request.url.pathname === "/api/provider"

@@ -8,6 +8,7 @@ Diagnostic logging for the timeline export (`proxy.js` error lines, the lifecycl
 ## Entrypoints and structure
 - `packages/web/server/lib/opencode/index.js`: public entrypoint (currently baseline placeholder).
 - `packages/web/server/lib/opencode/auth.js`: provider authentication file operations.
+- `packages/web/server/lib/opencode/antigravity-models.js`: server-side Antigravity model filtering and selection resolution for `models.search`. Twin module of `packages/ui/src/lib/opencode/antigravity.ts` — both must stay in sync regarding supported model IDs and fallback resolution.
 - `packages/web/server/lib/opencode/project-start-command.js`: the project's start command (`commands.start`) that the web server and the VS Code extension host run in every worktree they create. OpenCode 2.x keeps it on its project record, so the reader asks the running OpenCode in the directory the worktree is requested from (the contributor trust prompt asks in the primary checkout, never inside the fork's checkout): `GET /api/location` names the project, whose ID 2.x derives from the origin remote and so differs from OpenChamber's root-commit worktree ID, and `GET /api/project` holds the record. A failed read runs no command and logs a warning; the worktree is still created. Wired once per runtime with `configureProjectStartCommandSource`, the way `auth.js` is.
 - `packages/web/server/lib/opencode/auth-state-runtime.js`: managed OpenCode server auth password/header runtime.
 - `packages/web/server/lib/opencode/cli-options.js`: CLI/environment option parsing for server startup arguments.
@@ -159,6 +160,7 @@ exists in OpenCode's store.
   credential metadata, so quota providers can identify a Console sign-in
   without carrying account names or emails.
 - `getProviderAuth(providerId)`: that map's entry for one provider, or null.
+- `readAntigravityOwnedProviderIds()`: returns string array of provider IDs whose active stored credentials originate from Antigravity auth (`account.type === 'antigravity'` or metadata indicator). Used by `/api/provider/antigravity-owned` to let UI filter models without exposing raw secrets.
 - `projectCredentialEntries(entries)`: the wire-to-legacy projection.
 - `projectEnvironmentKeys(integrations, environment)`: variable values for the env connections OpenCode reports, by integration id.
 
@@ -257,6 +259,7 @@ Hard rules, verified against v2.0.8 (the completion stamp against v2.0.16)
   - `GET /api/config/opencode-resolution`
   - `POST /api/opencode/upgrade` (enforces the active runtime's upgrade capability, shares concurrent upgrade requests and runs the resolved CLI with `upgrade`; the existing Reload action restarts managed OpenCode afterwards)
   - `GET /api/opencode/upgrade-status` (returns version availability plus the authoritative `upgrade.supported`, `upgrade.manager`, and `upgrade.reason` capability)
+  - `GET /api/provider/antigravity-owned` (returns sanitized list of provider IDs whose active credentials come from Antigravity, registered before generic credential proxying to safely serve UI model filtering)
   - `GET /api/provider/:providerId/source`
   - `PUT /api/provider` (create/update custom OpenAI-compatible provider config in OpenCode user/project/custom layers via `scope`; secrets stay in auth via the OpenCode auth API)
   - `POST /api/provider/discover-models` (user-initiated custom-provider model discovery; fetches the configured `/models` path server-side and optionally enriches exact model matches from the shared models.dev cache)

@@ -67,10 +67,15 @@ describe('classifyAntigravityError', () => {
 
   test('names a missing access token', () => {
     const error = classifyAntigravityError({
-      message: 'Missing access token. Run `opencode auth login` to reauthenticate.',
+      message: 'Antigravity: Missing access token. Run `opencode auth login` to reauthenticate.',
     });
 
     expect(error?.kind).toBe('not-authenticated');
+  });
+
+  test('does not misclassify generic third-party rate limit or missing access token', () => {
+    expect(classifyAntigravityError({ message: 'Requests rate limit exceeded for mistral-large' })).toBeNull();
+    expect(classifyAntigravityError({ message: 'Missing access token for OpenAI' })).toBeNull();
   });
 });
 

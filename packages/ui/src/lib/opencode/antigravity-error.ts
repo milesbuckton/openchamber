@@ -45,8 +45,17 @@ const QUOTA_MARKERS = [
   'Quota resets in',
   'quota protection policy',
   'operator quota policy',
-  'rate limit exceeded',
 ];
+
+const GENERIC_RATE_LIMIT_MARKER = 'rate limit exceeded';
+
+/**
+ * Checks if the error text explicitly mentions Antigravity.
+ * Generic error markers like "rate limit exceeded" or "Missing access token"
+ * must co-occur with an Antigravity mention to avoid false positive classification
+ * of third-party provider errors (e.g., Mistral, OpenAI).
+ */
+const hasAntigravityContext = (text: string): boolean => /antigravity/i.test(text);
 
 /** The wait the plugin wrote: "113h 34m 26s", "45m", "12s". */
 const RESET_WAIT = /resets in ((?:\d+h)?(?:\s*\d+m)?(?:\s*\d+s)?)/i;
@@ -92,13 +101,16 @@ export const classifyAntigravityError = (
   if (text.includes(UNSUPPORTED_MODEL_MARKER)) {
     return { kind: 'unsupported-model', resetAt: null };
   }
-  if (text.includes(NOT_AUTHENTICATED_MARKER)) {
+  if (text.includes(NOT_AUTHENTICATED_MARKER) && hasAntigravityContext(text)) {
     return { kind: 'not-authenticated', resetAt: null };
   }
   if (text.includes(POOL_UNAVAILABLE_MARKER)) {
     return { kind: 'pool-unavailable', resetAt };
   }
-  if (QUOTA_MARKERS.some((marker) => text.includes(marker))) {
+  if (
+    QUOTA_MARKERS.some((marker) => text.includes(marker)) ||
+    (text.includes(GENERIC_RATE_LIMIT_MARKER) && hasAntigravityContext(text))
+  ) {
     return { kind: 'quota', resetAt };
   }
   return null;
