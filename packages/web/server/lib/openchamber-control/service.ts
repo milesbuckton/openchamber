@@ -16,6 +16,7 @@ import { createTerminalReadAction } from './terminal-read.js';
 import { runWaitAction } from './waits.js';
 import { readLocationCatalog } from '../opencode/location-plugins.js';
 import { createWorkNamer } from '../openchamber-sessions/work-naming.js';
+import { antigravityOwnedProviderIds, usableModels } from '../opencode/antigravity-models.js';
 import { CHATS_SCOPE_PUBLIC_ID } from '../scheduled-tasks/chats-scope.js';
 import { createWorkMembership } from '../session-work/membership.js';
 import { createSessionListing, positiveInteger } from './session-listing.js';
@@ -571,9 +572,15 @@ export const createOpenChamberControlService = (dependencies: ControlDependencie
 
   const searchModels = async (input: ControlInput, contextDirectory: ControlInput['directory']) => {
     const client = await getClient(asNonEmptyString(input.directory) || asNonEmptyString(contextDirectory) || '');
-    const [settings, [catalog, providerList]] = await Promise.all([
+    const [settings, [catalog, providerList], credentials] = await Promise.all([
       readSettingsFromDiskMigrated(),
       readLocationCatalog(client),
+      // The Antigravity plugin takes a provider over when it holds that
+      // provider's credential, and then serves only the models it registered.
+      // The credential list says which providers those are. The raw client
+      // answers with `{data}`; both shapes and a client without the endpoint
+      // are tolerated.
+      ((client as { credential?: { list?: () => Promise<unknown> } }).credential?.list?.() ?? Promise.resolve(undefined)),
     ]);
     const providerNames = new Map(providerList.data.map((provider) => [provider.id, provider.name]));
     const refKey = (ref: ControlSettings['recentModels']) => {
@@ -589,7 +596,8 @@ export const createOpenChamberControlService = (dependencies: ControlDependencie
     ]);
     const provider = asNonEmptyString(input.provider)?.toLowerCase();
     const terms = (asNonEmptyString(input.query) ?? '').toLowerCase().split(/\s+/).filter(Boolean);
-    const candidates = catalog.data
+    const usable = usableModels(catalog.data, antigravityOwnedProviderIds(credentials));
+    const candidates = usable
       .filter((model) => !hidden.has(modelKey(model)))
       .filter((model) => !provider
         || model.providerID.toLowerCase() === provider

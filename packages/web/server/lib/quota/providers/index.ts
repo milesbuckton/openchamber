@@ -25,7 +25,6 @@ import * as cursor from './cursor.js';
 import * as deepinfra from './deepinfra.js';
 import * as deepseek from './deepseek.js';
 import * as exeDev from './exe-dev.js';
-import * as google from './google/index.js';
 import * as antigravity from './antigravity/index.js';
 import * as hyper from './hyper.js';
 import * as kimi from './kimi.js';
@@ -88,12 +87,6 @@ const registry: QuotaProviderRegistry = {
     providerName: exeDev.providerName,
     isConfigured: exeDev.isConfigured,
     fetchQuota: exeDev.fetchQuota
-  },
-  google: {
-    providerId: google.providerId,
-    providerName: google.providerName,
-    isConfigured: google.isConfigured,
-    fetchQuota: google.fetchGoogleQuota
   },
   antigravity: {
     providerId: antigravity.providerId,
@@ -289,7 +282,6 @@ export const fetchQuotaForProvider = (providerId: string | null) => {
 
 export const fetchClaudeQuota = claude.fetchQuota;
 export const fetchOpenaiQuota = openai.fetchQuota;
-export const fetchGoogleQuota = google.fetchGoogleQuota;
 export const fetchAntigravityQuota = antigravity.fetchQuota;
 export const fetchCodexQuota = codex.fetchQuota;
 export const fetchCursorQuota = cursor.fetchQuota;

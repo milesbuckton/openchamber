@@ -50,6 +50,7 @@ mock.module('./opencodeConfig', () => ({
 }));
 mock.module('./opencodeAuth', () => ({
   getProviderAuth: mock(),
+  readAntigravityOwnedProviderIds: mock(() => []),
   removeProviderAuth: mock(),
 }));
 mock.module('./quotaProviders', () => ({

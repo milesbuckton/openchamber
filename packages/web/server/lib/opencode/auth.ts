@@ -187,6 +187,17 @@ export async function getProviderAuth(providerId: string) {
   return credentials[providerId] || null;
 }
 
+/**
+ * The providers the Antigravity plugin owns, derived from OpenCode's stored
+ * credentials. Answers only provider IDs so secrets never leave the server.
+ */
+export async function readAntigravityOwnedProviderIds() {
+  const current = source;
+  if (!current) throw new Error('OpenCode is not connected yet');
+  const { antigravityOwnedProviderIds } = await import('./antigravity-models.js');
+  return Array.from(antigravityOwnedProviderIds(await current.list()));
+}
+
 export async function getStoredLogin(integrationID: string) {
   const logins = await sharedLoginRead(readLogins);
   return logins[integrationID] || null;

@@ -2,13 +2,25 @@ import type { UsageProviderGroup, UsageLimitRow } from '@/components/usage/usage
 import { openRouterSpendSelection } from '@/lib/quota/windowKeys';
 
 
+/**
+ * Quota provider ids mostly match OpenCode provider ids; these are the ones
+ * that do not. Unmatched providers simply produce no headline.
+ *
+ * `claude-code` is the provider the opencode-claude integration registers, and
+ * it bills against the same Claude subscription the `claude` quota reports.
+ * `kilocode` / `kilo-code` are the same Kilo Gateway account as `kilo`.
+ * `google` / `gemini` are the provider ids Google models are served under —
+ * the Antigravity auth plugin registers itself as `google` — and their quota
+ * is reported by the `antigravity` card.
+ */
 const QUOTA_PROVIDER_ALIASES = new Map<string, string>([
   ['openai', 'codex'],
   ['chatgpt', 'codex'],
   ['anthropic', 'claude'],
   ['claude-agent', 'claude'],
   ['claude-code', 'claude'],
-  ['gemini', 'google'],
+  ['gemini', 'antigravity'],
+  ['google', 'antigravity'],
   ['kilocode', 'kilo'],
   ['kilo-code', 'kilo'],
 ]);

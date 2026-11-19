@@ -1,5 +1,5 @@
 
-import { refreshGoogleAccessToken } from '../google/oauth.js';
+import { refreshAntigravityAccessToken } from './oauth.js';
 import { antigravityHeaders } from './client.js';
 import type { JsonValue } from '../../utils/contracts.js';
 
@@ -28,7 +28,8 @@ const ANTIGRAVITY_ENDPOINTS = [
 ];
 
 export const refreshAntigravityToken = async (refreshToken: string | null) => {
-  const result = await refreshGoogleAccessToken(refreshToken, 'antigravity');
+  if (!refreshToken) return null;
+  const result = await refreshAntigravityAccessToken(refreshToken);
   return result.ok ? result.accessToken : null;
 };
 

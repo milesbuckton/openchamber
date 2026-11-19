@@ -33,10 +33,11 @@ const bucket = (window: string, remainingFraction: number) => ({
 });
 
 // Mirrors the gating measured in #5138: a 1.x client gets no Gemini group.
-const stubGoogle = () => {
+const stubGoogle = (onTokenRequest?: (body: URLSearchParams) => void) => {
   const userAgents: Array<{ url: string; userAgent: string | null }> = [];
   globalThis.fetch = async (url, options) => {
     if (String(url) === 'https://oauth2.googleapis.com/token') {
+      onTokenRequest?.(new URLSearchParams(String(options?.body ?? '')));
       return Response.json({ access_token: 'test-access' });
     }
     const userAgent = new Headers(options?.headers).get('User-Agent');
@@ -73,5 +74,43 @@ describe('VS Code Antigravity quota', () => {
     assert.equal(models['claude-sonnet-5-5']?.windows['5h']?.remainingPercent, 80);
     assert.equal(models['claude-sonnet-5-5']?.windows.weekly?.remainingPercent, 50);
     assert.ok(!JSON.stringify(result).includes('test-access'));
+  });
+
+  it('uses the credential the Antigravity auth plugin stored', async () => {
+    // The plugin keeps its accounts in a store directory next to the config
+    // file, not in the legacy accounts file.
+    const storeDir = path.join(configDir, 'antigravity-accounts.json.store.test.generation');
+    fs.mkdirSync(storeDir, { recursive: true });
+    fs.writeFileSync(path.join(configDir, 'antigravity-accounts.json.store.pointer.json'), JSON.stringify({
+      schemaVersion: 1,
+      id: 'test',
+      directoryBasename: path.basename(storeDir),
+    }));
+    fs.writeFileSync(path.join(storeDir, 'config.json'), JSON.stringify({
+      version: 1,
+      accounts: [{ id: 'account-1', type: 'oauth', addedAt: 1000 }],
+    }));
+    fs.writeFileSync(path.join(storeDir, 'state.json'), JSON.stringify({
+      version: 1,
+      accounts: {
+        'account-1': {
+          refresh: 'store-refresh',
+          commonAuthProviderState: { metadata: { email: 'store@example.com', projectId: 'store-project' } },
+        },
+      },
+    }));
+
+    const refreshTokens: string[] = [];
+    stubGoogle((body) => refreshTokens.push(body.get('refresh_token') ?? ''));
+
+    try {
+      const result = await fetchQuotaForProvider('antigravity');
+
+      assert.equal(result.ok, true);
+      assert.deepEqual(refreshTokens, ['store-refresh']);
+    } finally {
+      fs.rmSync(storeDir, { recursive: true, force: true });
+      fs.rmSync(path.join(configDir, 'antigravity-accounts.json.store.pointer.json'), { force: true });
+    }
   });
 });

@@ -1,63 +1,102 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ANTIGRAVITY_ACCOUNTS_PATHS } from '../../utils/index.js';
-import { resolveAntigravityAuth } from './auth.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const originalPaths = [...ANTIGRAVITY_ACCOUNTS_PATHS];
-let directory;
-let firstPath;
-let secondPath;
+const originalConfigDir = process.env.OPENCODE_CONFIG_DIR;
+const tempDirs = [];
 
-beforeEach(() => {
-  directory = mkdtempSync(join(tmpdir(), 'antigravity-auth-'));
-  firstPath = join(directory, 'first.json');
-  secondPath = join(directory, 'second.json');
-  ANTIGRAVITY_ACCOUNTS_PATHS.splice(0, ANTIGRAVITY_ACCOUNTS_PATHS.length, firstPath, secondPath);
-});
+const makeConfigDir = () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'openchamber-ag-auth-'));
+  tempDirs.push(dir);
+  return dir;
+};
+
+/**
+ * The auth module resolves the OpenCode config dir when it loads, so the
+ * module graph is reloaded for every case.
+ */
+const loadAuth = async (configDir) => {
+  process.env.OPENCODE_CONFIG_DIR = configDir;
+  vi.resetModules();
+  return import('./auth.js');
+};
+
+const writeStore = (configDir, { refresh, projectId, email }) => {
+  const dirName = 'antigravity-accounts.json.store.test.generation';
+  const storeDir = path.join(configDir, dirName);
+  fs.mkdirSync(storeDir, { recursive: true });
+  fs.writeFileSync(path.join(configDir, 'antigravity-accounts.json.store.pointer.json'), JSON.stringify({
+    schemaVersion: 1,
+    id: 'test',
+    directoryBasename: dirName
+  }));
+  fs.writeFileSync(path.join(storeDir, 'config.json'), JSON.stringify({
+    version: 1,
+    accounts: [{ id: 'account-1', type: 'oauth', addedAt: 1000 }]
+  }));
+  fs.writeFileSync(path.join(storeDir, 'state.json'), JSON.stringify({
+    version: 1,
+    accounts: {
+      'account-1': {
+        refresh,
+        commonAuthProviderState: { metadata: { email, projectId } }
+      }
+    }
+  }));
+};
 
 afterEach(() => {
-  ANTIGRAVITY_ACCOUNTS_PATHS.splice(0, ANTIGRAVITY_ACCOUNTS_PATHS.length, ...originalPaths);
-  rmSync(directory, { recursive: true, force: true });
+  if (originalConfigDir === undefined) delete process.env.OPENCODE_CONFIG_DIR;
+  else process.env.OPENCODE_CONFIG_DIR = originalConfigDir;
+  while (tempDirs.length) {
+    fs.rmSync(tempDirs.pop(), { recursive: true, force: true });
+  }
+  vi.resetModules();
 });
 
-describe('Antigravity accounts file boundary', () => {
-  it('skips absent, primitive and empty accounts files', () => {
-    for (const value of [null, false, 3, 'text', [], {}, { accounts: [] }, { accounts: 'constructor' }]) {
-      writeFileSync(firstPath, JSON.stringify(value));
-      expect(resolveAntigravityAuth()).toBeNull();
-    }
+describe('Antigravity quota auth', () => {
+  it('resolves the account the auth plugin stored', async () => {
+    const configDir = makeConfigDir();
+    writeStore(configDir, {
+      refresh: '1//03vtoken',
+      projectId: 'aicode-consumers',
+      email: 'user@example.com'
+    });
+
+    const { resolveAntigravityAuth, isConfigured } = await loadAuth(configDir);
+
+    expect(resolveAntigravityAuth()).toEqual({
+      sourceId: 'antigravity',
+      sourceLabel: 'Antigravity',
+      refreshToken: '1//03vtoken',
+      projectId: 'aicode-consumers',
+      email: 'user@example.com'
+    });
+    expect(isConfigured()).toBe(true);
   });
 
-  it('keeps active-account fallback and packed project context', () => {
-    writeFileSync(firstPath, JSON.stringify({
-      activeIndex: '99',
-      accounts: [{ refreshToken: 'token|packed-project|managed-project', email: 42 }],
+  it('falls back to the legacy accounts file when there is no store', async () => {
+    const configDir = makeConfigDir();
+    fs.writeFileSync(path.join(configDir, 'antigravity-accounts.json'), JSON.stringify({
+      accounts: [{ refreshToken: 'legacy-token', projectId: 'legacy-project', email: 'legacy@example.com' }]
     }));
+
+    const { resolveAntigravityAuth } = await loadAuth(configDir);
+
     expect(resolveAntigravityAuth()).toEqual({
       sourceId: 'antigravity',
       sourceLabel: 'Antigravity',
-      refreshToken: 'token',
-      projectId: 'packed-project',
-      email: 42,
+      refreshToken: 'legacy-token',
+      projectId: 'legacy-project',
+      email: 'legacy@example.com'
     });
   });
 
-  it('keeps a truthy non-string refresh token configured with a null parsed token', () => {
-    writeFileSync(firstPath, JSON.stringify({ accounts: [{ refreshToken: 42 }] }));
-    expect(resolveAntigravityAuth()).toEqual({
-      sourceId: 'antigravity',
-      sourceLabel: 'Antigravity',
-      refreshToken: null,
-      projectId: null,
-      email: undefined,
-    });
-  });
+  it('reports no credential when neither source exists', async () => {
+    const { resolveAntigravityAuth, isConfigured } = await loadAuth(makeConfigDir());
 
-  it('continues to the next file when the selected account has no token', () => {
-    writeFileSync(firstPath, JSON.stringify({ accounts: [null, { refreshToken: 'unused' }] }));
-    writeFileSync(secondPath, JSON.stringify({ accounts: [{ refreshToken: 'selected', managedProjectId: 'managed' }] }));
-    expect(resolveAntigravityAuth()?.projectId).toBe('managed');
+    expect(resolveAntigravityAuth()).toBeNull();
+    expect(isConfigured()).toBe(false);
   });
 });

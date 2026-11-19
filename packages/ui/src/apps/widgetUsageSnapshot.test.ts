@@ -98,8 +98,8 @@ describe('Android Usage widgets from built-in quota state', () => {
   });
 
   test('honors hidden providers and selected models for model-scoped windows', () => {
-    const google = provider('google', 'Google', {});
-    google.usage = {
+    const antigravity = provider('antigravity', 'Antigravity', {});
+    antigravity.usage = {
       windows: {},
       models: {
         'gemini/flash': { windows: { '5h': quotaWindow(4, 96) } },
@@ -108,9 +108,9 @@ describe('Android Usage widgets from built-in quota state', () => {
     };
     const snapshot = snapshotOf({
       ...data,
-      dropdownProviderIds: ['google'],
-      selectedModels: { google: ['gemini/pro'] },
-      results: [google],
+      dropdownProviderIds: ['antigravity'],
+      selectedModels: { antigravity: ['gemini/pro'] },
+      results: [antigravity],
     });
     expect(snapshot.providers).toHaveLength(1);
     expect(snapshot.providers[0]?.windows).toHaveLength(1);

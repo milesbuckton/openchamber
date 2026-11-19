@@ -20,15 +20,6 @@ export function getDisplayModelName(modelName: string): string {
   return modelName;
 }
 
-const GOOGLE_MODEL_FAMILIES: ModelFamily[] = [
-  {
-    id: 'gemini-auth',
-    label: 'Gemini',
-    matcher: (modelName) => modelName.startsWith('gemini/'),
-    order: 1,
-  },
-];
-
 const ANTIGRAVITY_MODEL_FAMILIES: ModelFamily[] = [
   {
     id: 'antigravity-gemini',
@@ -63,7 +54,6 @@ const OPENCODE_MODEL_FAMILIES: ModelFamily[] = [
 ];
 
 const PROVIDER_MODEL_FAMILIES: Partial<Record<QuotaProviderId, ModelFamily[]>> = {
-  google: GOOGLE_MODEL_FAMILIES,
   antigravity: ANTIGRAVITY_MODEL_FAMILIES,
   opencode: OPENCODE_MODEL_FAMILIES,
 };
@@ -109,6 +99,13 @@ export function groupModelsByFamilyWithGetter<T>(
 
 const GEMINI_3_MODEL = /^gemini-3[.-]/;
 
+/**
+ * Get default models for a provider based on simple patterns.
+ * For the Antigravity provider with gemini/ and antigravity/ prefixes:
+ * - Gemini 3.x models
+ * - All Claude models
+ * For the Claude provider: every model it reports a limit for.
+ */
 export function getDefaultModels(
   providerId: QuotaProviderId,
   availableModels: string[]

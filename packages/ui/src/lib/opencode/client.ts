@@ -30,6 +30,7 @@ import { captureRuntimeInstance, getRuntimeKey } from "@/lib/runtime-switch"
 import { getRegisteredRuntimeAPIs } from "@/contexts/runtimeAPIRegistry"
 import { markStartupTrace } from "@/lib/startupTrace"
 import { assertProviderCircuitClosed, recordProviderError, recordProviderSuccess } from "./provider-tracker"
+import { isUsableModel, usableModels } from "./antigravity"
 import { normalizePath } from "@/lib/pathNormalization"
 import { PART_SHELLS_HEADER, PART_SHELLS_VERSION } from "./toolContentShells"
 import { isAutoModel } from "@/lib/routing/autoModel"
@@ -62,7 +63,7 @@ import { runningImageJobFromWire, type RunningImageJob } from "./background-imag
 import { writeTempFiles, type TempFileResult, type TempFileSource } from "./temp-files"
 import { subagentCancellationNote } from "./subagent-run"
 import { toJsonRecord } from "./json"
-import { projectProviderCatalog, type ProviderCatalog } from "./provider-catalog"
+import { type ProviderCatalog } from "./provider-catalog"
 import { readMessageThroughAncestors } from "./message-ownership"
 import {
   deniesAnyProvider,
@@ -1803,12 +1804,33 @@ class OpencodeService {
       const client = this.clientFor(effectiveDirectory)
       const providerClient = isSpaceDirectory(effectiveDirectory) ? this.hostClientOfSpace(effectiveDirectory) : client
       await requireLocationPlugins([client, providerClient], isCurrent)
-      const [models, fallback, providers] = await Promise.all([
+      const [models, fallback, providers, ownedAntigravityResult] = await Promise.all([
         call("model.list", () => client.model.list({ types: ["chat", "image"] }).then((r) => r.data)),
         call("model.default", () => client.model.default().then((r) => r.data)).catch(() => undefined),
         call("provider.list", () => providerClient.provider.list().then((r) => r.data)),
+        // The Antigravity plugin takes a provider over when it holds that
+        // provider's credential, and then serves only the models it registered.
+        // We read only the sanitized owned provider IDs from OpenChamber server/bridge
+        // so raw credentials never cross the wire.
+        runtimeFetch("/api/provider/antigravity-owned")
+          .then(async (res) => (res.ok ? ((await res.json()) as { providerIds?: string[] }) : undefined))
+          .catch(() => undefined),
       ])
-      return projectProviderCatalog(models, fallback, providers)
+      const ownedProviders = new Set(
+        Array.isArray(ownedAntigravityResult?.providerIds) ? ownedAntigravityResult.providerIds : []
+      )
+      const usable = usableModels(models, ownedProviders)
+      const defaultModel = fallback
+        ? { id: fallback.modelID, providerID: fallback.providerID }
+        : undefined
+      return compact({
+        providers: providers.map(withZenName),
+        models: usable.map((model) => (
+          Array.isArray(model.variants) ? model : { ...model, variants: [] }
+        )),
+        default: defaultModel && isUsableModel(defaultModel, ownedProviders) ? defaultModel : undefined,
+        antigravityProviderIds: [...ownedProviders],
+      })
     })()
 
     this.providerCatalogInFlight.set(key, request)

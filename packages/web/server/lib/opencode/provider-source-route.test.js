@@ -106,6 +106,28 @@ describe('the stored credential list', () => {
   });
 });
 
+describe('GET /api/provider/antigravity-owned', () => {
+  afterEach(() => configureOpenCodeCredentials(null));
+
+  it('answers the provider IDs owned by Antigravity from OpenCode credentials', async () => {
+    configureOpenCodeCredentials({
+      list: async () => [
+        {
+          integrationID: 'google',
+          active: true,
+          value: { type: 'oauth', methodID: 'antigravity-auth-pool-browser' },
+        },
+      ],
+    });
+
+    const response = await request(createApp(vi.fn()))
+      .get('/api/provider/antigravity-owned')
+      .expect(200);
+
+    expect(response.body).toEqual({ providerIds: ['google'] });
+  });
+});
+
 describe('GET /api/provider/:providerId/source', () => {
   // The auth source reads OpenCode's stored credentials; this one has none.
   beforeEach(() => configureOpenCodeCredentials({ list: async () => [] }));
